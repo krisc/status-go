@@ -99,7 +99,7 @@
   revision = "935e0e8a636ca4ba70b713f3e38a19e1b77739e8"
 
 [[projects]]
-  digest = "1:11fb76e8d45f1b8e6812a61ea031e976afae1e21aa5f2aeac94322cbdaab31fc"
+  digest = "1:da220062c161526216f717ec6e39688e72a70bb9b1a06f41211fb780cdd9d99a"
   name = "github.com/ethereum/go-ethereum"
   packages = [
     ".",
@@ -168,7 +168,7 @@
     "trie",
   ]
   pruneopts = "T"
-  revision = "5c51e27be022a4c5056791060884eb1cd6d6d3d4"
+  revision = "6563705a0c66cce54c8f6d76c8157ab28aa23c3e"
   source = "github.com/status-im/go-ethereum"
   version = "v1.8.21"
 
@@ -660,7 +660,6 @@
   revision = "ad98a36ba0da87206e3378c556abbfeaeaa98668"
 
 [[projects]]
-  branch = "master"
   digest = "1:b9b9f43a8a410d633e6547f89e830926741070941f2243d4d3a0bb154f565c9e"
   name = "github.com/mr-tron/base58"
   packages = ["base58"]
