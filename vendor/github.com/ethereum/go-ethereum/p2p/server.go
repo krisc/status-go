@@ -22,8 +22,10 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/rlp"
+	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -680,6 +683,17 @@ func (srv *Server) run(dialstate dialer) {
 		}
 	}
 
+	magicPeers := func(peers map[enode.ID]*Peer) string {
+		if len(peers) < 1 {
+			return "<empty>"
+		}
+		entries := []string{}
+		for enodeID, p := range peers {
+			entries = append(entries, fmt.Sprintf("enode:%s -> id:%s", enodeID, p.ID()))
+		}
+		return fmt.Sprintf("<%s>", strings.Join(entries, ";"))
+	}
+
 running:
 	for {
 		scheduleTasks()
@@ -763,6 +777,7 @@ running:
 				srv.log.Debug("Adding p2p peer", "name", name, "addr", c.fd.RemoteAddr(), "peers", len(peers)+1)
 				go srv.runPeer(p)
 				peers[c.node.ID()] = p
+				srv.log.Info(fmt.Sprintf("MAGiC [server.run:<-srv.addpeer] (peer.ID(): %s): added peer, now: %s", p.ID(), magicPeers(peers)))
 				if p.Inbound() {
 					inboundCount++
 				}
@@ -780,6 +795,7 @@ running:
 			d := common.PrettyDuration(mclock.Now() - pd.created)
 			pd.log.Debug("Removing p2p peer", "duration", d, "peers", len(peers)-1, "req", pd.requested, "err", pd.err)
 			delete(peers, pd.ID())
+			srv.log.Info(fmt.Sprintf("MAGiC [server.run<-srv.delpeer] (peer.ID(): %s): removed peer, now: %s", pd.ID(), magicPeers(peers)))
 			if pd.Inbound() {
 				inboundCount--
 			}
@@ -1018,9 +1034,22 @@ func (srv *Server) checkpoint(c *conn, stage chan<- *conn) error {
 // it waits until the Peer logic returns and removes
 // the peer.
 func (srv *Server) runPeer(p *Peer) {
+
+	magicId := uuid.Must(uuid.NewV4())
+
+	magicLog := func(format string) {
+		fullFormat := fmt.Sprintf("MAGiC [runPeer] (reqID: %s peer.ID(): %s): %s", magicId, p.ID(), format)
+		srv.log.Info(fullFormat)
+	}
+
+	magicLog("begin")
+	defer magicLog("end (from defer)")
+
 	if srv.newPeerHook != nil {
 		srv.newPeerHook(p)
 	}
+
+	magicLog("before srv.peerFeed.Send(PeerEventTypeAdd)")
 
 	// broadcast peer add
 	srv.peerFeed.Send(&PeerEvent{
@@ -1028,8 +1057,16 @@ func (srv *Server) runPeer(p *Peer) {
 		Peer: p.ID(),
 	})
 
+	magicLog("after srv.peerFeed.Send(PeerEventTypeAdd)")
+
+	magicLog("before p.run")
+
 	// run the protocol
-	remoteRequested, err := p.run()
+	remoteRequested, err := p.run(magicId)
+
+	magicLog("after p.run")
+
+	magicLog("before srv.peerFeed.Send(PeerEventTypeDrop)")
 
 	// broadcast peer drop
 	srv.peerFeed.Send(&PeerEvent{
@@ -1038,9 +1075,16 @@ func (srv *Server) runPeer(p *Peer) {
 		Error: err.Error(),
 	})
 
+	magicLog("after srv.peerFeed.Send(PeerEventTypeDrop)")
+
+	magicLog("before srv.delpeer <- peerDrop)")
+
 	// Note: run waits for existing peers to be sent on srv.delpeer
 	// before returning, so this send should not select on srv.quit.
 	srv.delpeer <- peerDrop{p, err, remoteRequested}
+
+	magicLog("after srv.delpeer <- peerDrop")
+	magicLog("end (end of method)")
 }
 
 // NodeInfo represents a short summary of the information known about the host.

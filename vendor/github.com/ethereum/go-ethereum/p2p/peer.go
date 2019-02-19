@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/rlp"
+	uuid "github.com/satori/go.uuid"
 )
 
 var (
@@ -194,7 +195,12 @@ func (p *Peer) Log() log.Logger {
 	return p.log
 }
 
-func (p *Peer) run() (remoteRequested bool, err error) {
+func (p *Peer) run(magicID uuid.UUID) (remoteRequested bool, err error) {
+	magicLog := func(format string) {
+		fullFormat := fmt.Sprintf("MAGiC [Peer.run] (reqID: %s peer.ID(): %s): %s", magicID, p.ID(), format)
+		p.log.Info(fullFormat)
+	}
+
 	var (
 		writeStart = make(chan struct{}, 1)
 		writeErr   = make(chan error, 1)
@@ -202,26 +208,44 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
+
+	magicLog("before go p.readLoop(readErr, reads)")
+
 	go p.readLoop(readErr)
 	go p.pingLoop()
 
+	magicLog("after go p.pingLoop()")
+
 	// Start all protocol handlers.
 	writeStart <- struct{}{}
+
+	magicLog("after writeStart <- struct{}{}")
+
 	p.startProtocols(writeStart, writeErr)
+
+	magicLog("after p.startProtocols()")
+
+	loopTurn := 0
 
 	// Wait for an error or disconnect.
 loop:
 	for {
+		loopTurn++
+
 		select {
 		case err = <-writeErr:
+			magicLog(fmt.Sprintf("loop:case err = <-writeErr (%d)", loopTurn))
 			// A write finished. Allow the next write to start if
 			// there was no error.
 			if err != nil {
 				reason = DiscNetworkError
 				break loop
 			}
+			magicLog(fmt.Sprintf("loop:case err = <-writeErr: before writeStart <- struct{}{} (%d)", loopTurn))
 			writeStart <- struct{}{}
+			magicLog(fmt.Sprintf("loop:case err = <-writeErr: after writeStart <- struct{}{} (%d)", loopTurn))
 		case err = <-readErr:
+			magicLog("loop:case err = <-readErr")
 			if r, ok := err.(DiscReason); ok {
 				remoteRequested = true
 				reason = r
@@ -230,17 +254,33 @@ loop:
 			}
 			break loop
 		case err = <-p.protoErr:
+			magicLog("loop:case err = <-p.protoErr")
 			reason = discReasonForError(err)
 			break loop
 		case err = <-p.disc:
+			magicLog("loop:case err = <-p.disc")
 			reason = discReasonForError(err)
 			break loop
 		}
 	}
 
+	magicLog(fmt.Sprintf("exit loop with error = %v", reason))
+
+	magicLog("before close(p.closed)")
+
 	close(p.closed)
+
+	magicLog("before p.rw.close(reason)")
+
 	p.rw.close(reason)
+
+	magicLog("before p.wg.Wait()")
+
 	p.wg.Wait()
+
+	magicLog("after p.wg.Wait()")
+	magicLog(fmt.Sprintf("exiting with err = %s", err.Error()))
+
 	return remoteRequested, err
 }
 
