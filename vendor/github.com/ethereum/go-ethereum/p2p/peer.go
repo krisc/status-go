@@ -38,6 +38,8 @@ var (
 	ErrShuttingDown = errors.New("shutting down")
 )
 
+type logFunc func(string)
+
 const (
 	baseProtocolVersion    = 5
 	baseProtocolLength     = uint64(16)
@@ -211,8 +213,8 @@ func (p *Peer) run(magicID uuid.UUID) (remoteRequested bool, err error) {
 
 	magicLog("before go p.readLoop(readErr, reads)")
 
-	go p.readLoop(readErr)
-	go p.pingLoop()
+	go p.readLoop(readErr, magicLog)
+	go p.pingLoop(magicLog)
 
 	magicLog("after go p.pingLoop()")
 
@@ -221,7 +223,7 @@ func (p *Peer) run(magicID uuid.UUID) (remoteRequested bool, err error) {
 
 	magicLog("after writeStart <- struct{}{}")
 
-	p.startProtocols(writeStart, writeErr)
+	p.startProtocols(writeStart, writeErr, magicLog)
 
 	magicLog("after p.startProtocols()")
 
@@ -276,18 +278,32 @@ loop:
 
 	magicLog("before p.wg.Wait()")
 
-	p.wg.Wait()
+	/** IGORM -> a watchdog for the waitGroup **/
+	c := make(chan struct{})
 
-	magicLog("after p.wg.Wait()")
+	go func() {
+		defer close(c)
+		p.wg.Wait()
+	}()
+
+	select {
+	case <-c:
+		magicLog("p.wg.Wait() successfully exited")
+	case <-time.After(5 * time.Second):
+		magicLog("p.wg.Wait() -> timeout! a few goroutines leaked LEAKED_PEER")
+	}
+
 	magicLog(fmt.Sprintf("exiting with err = %s", err.Error()))
 
 	return remoteRequested, err
 }
 
-func (p *Peer) pingLoop() {
+func (p *Peer) pingLoop(logFunc logFunc) {
 	ping := time.NewTimer(pingInterval)
 	defer p.wg.Done()
 	defer ping.Stop()
+	logFunc("pingLoop started")
+	defer func() { logFunc("pingLoop stopped") }()
 	for {
 		select {
 		case <-ping.C:
@@ -302,8 +318,10 @@ func (p *Peer) pingLoop() {
 	}
 }
 
-func (p *Peer) readLoop(errc chan<- error) {
+func (p *Peer) readLoop(errc chan<- error, logFunc logFunc) {
 	defer p.wg.Done()
+	logFunc("readLoop started")
+	defer func() { logFunc("readLoop stopped") }()
 	for {
 		msg, err := p.rw.ReadMsg()
 		if err != nil {
@@ -385,7 +403,7 @@ outer:
 	return result
 }
 
-func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error) {
+func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error, logFunc logFunc) {
 	p.wg.Add(len(p.running))
 	for _, proto := range p.running {
 		proto := proto
@@ -396,17 +414,20 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 		if p.events != nil {
 			rw = newMsgEventer(rw, p.events, p.ID(), proto.Name)
 		}
-		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
+		logFunc(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
 		go func() {
 			err := proto.Run(p, rw)
 			if err == nil {
-				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
+				logFunc(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
 				err = errProtocolReturned
 			} else if err != io.EOF {
-				p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
+				logFunc(fmt.Sprintf("Protocol %s/%d failed: err=%v", proto.Name, proto.Version, err))
 			}
+			logFunc(fmt.Sprintf("protocol %s/%d :: before p.protoErr <- err", proto.Name, proto.Version))
 			p.protoErr <- err
+			logFunc(fmt.Sprintf("protocol %s/%d :: after p.protoErr <- err", proto.Name, proto.Version))
 			p.wg.Done()
+			logFunc(fmt.Sprintf("protocol %s/%d :: protocol stopped", proto.Name, proto.Version))
 		}()
 	}
 }
