@@ -846,11 +846,13 @@ func (whisper *Whisper) sendConfirmation(peer enode.ID, rw p2p.MsgReadWriter, da
 func (whisper *Whisper) runMessageLoop(p *Peer, rw p2p.MsgReadWriter) error {
 	for {
 		// fetch the next packet
+		log.Info("reading", "peer", p.peer.ID().String())
 		packet, err := rw.ReadMsg()
 		if err != nil {
 			log.Info("message loop", "peer", p.peer.ID(), "err", err)
 			return err
 		}
+		log.Info("read a packet", "packet code", packet.Code, "peer", p.peer.ID().String())
 		if packet.Size > whisper.MaxMessageSize() {
 			log.Warn("oversized message received", "peer", p.peer.ID())
 			return errors.New("oversized message received")
